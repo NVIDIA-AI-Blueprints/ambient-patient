@@ -6,38 +6,38 @@ Pipeline:
     llm_processor: "NvidiaRAGService" # OR NvidiaLLMService OR NvidiaRAGService OR OpenAILLMService
     filler:
         - "Hold on a moment"
- 
+
 ## System Prompt is set by the agent backend, we don't need to set the system prompt here
 OpenAILLMContext:
     name: "Assistant"
- 
- 
+
+
 # This configuration is only used when llm_processor is set to "NvidiaRAGService"
 NvidiaRAGService:
     max_tokens: 1024
     rag_server_url: "http://app-server-healthcare-assistant:8081"
- 
- 
+
+
 RivaASRService:
     # Self-hosted ASR on remote Brev instance
-    server: "160.211.47.80:50052"
+    server: "${SERVER_IP}:50052"
     language: "en-US"
     sample_rate: 16000
-    model: "parakeet-1-1b-ctc-en-us"
- 
+    model: "parakeet-1.1b-en-US-asr-streaming"
+
 RivaTTSService:
     # Public endpoint TTS fallback
-    server: "160.211.47.80:50051"
+    server: "${SERVER_IP}:50051"
     language: "en-US"
     voice_id: "Magpie-Multilingual.EN-US.Mia"
-    model: "magpie-tts-multilingual"
- 
- 
+    model: "magpie_tts_ensemble-Magpie-Multilingual"
+
+
 # This configuration is only used when llm_processor is set to "NvidiaLLMService"
 # Currently not used
 NvidiaLLMService:
     model: "meta/llama-3.1-8b-instruct"
- 
+
 # This configuration is only used when llm_processor is set to "OpenAILLMService"
 # Currently not used
 OpenAILLMService:
