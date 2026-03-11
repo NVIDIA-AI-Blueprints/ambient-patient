@@ -2,3 +2,5 @@
 *__pycache__/
 ace-controller-voice-interface/audio_dumps/
 agent/app_output_files/
+ace-controller-voice-interface/ace_controller.local.env
+agent/vars.local.env
