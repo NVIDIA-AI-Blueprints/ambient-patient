@@ -18,7 +18,7 @@ services:
       - ./graph_definitions:/app/graph_definitions
       - ./nmgr-config-store:/app/nmgr-config-store
       - ./chain_server:/app/chain_server
-      - ./vars.env:/env_vars/vars.env
+      - ./vars.local.env:/env_vars/vars.env
       - ./sample_db:/app/sample_db
     shm_size: 5gb
     networks:
@@ -44,7 +44,7 @@ services:
       - ./graph_definitions:/app/graph_definitions
       - ./nmgr-config-store:/app/nmgr-config-store
       - ./utils:/app/utils
-      - ./vars.env:/env_vars/vars.env
+      - ./vars.local.env:/env_vars/vars.env
     shm_size: 5gb
     networks:
       - healthcare-agent-network
@@ -68,7 +68,7 @@ services:
       - ./graph_definitions:/app/graph_definitions
       - ./nmgr-config-store:/app/nmgr-config-store
       - ./utils:/app/utils
-      - ./vars.env:/env_vars/vars.env
+      - ./vars.local.env:/env_vars/vars.env
       - ./sample_db:/app/sample_db
     shm_size: 5gb
     networks:
@@ -93,7 +93,7 @@ services:
       - ./graph_definitions:/app/graph_definitions
       - ./nmgr-config-store:/app/nmgr-config-store
       - ./utils:/app/utils
-      - ./vars.env:/env_vars/vars.env
+      - ./vars.local.env:/env_vars/vars.env
     shm_size: 5gb
     networks:
       - healthcare-agent-network
@@ -118,7 +118,7 @@ services:
       - ./graph_definitions:/app/graph_definitions
       - ./nmgr-config-store:/app/nmgr-config-store
       - ./utils:/app/utils
-      - ./vars.env:/env_vars/vars.env
+      - ./vars.local.env:/env_vars/vars.env
     shm_size: 5gb
     networks:
       - healthcare-agent-network
@@ -135,7 +135,7 @@ services:
     expose:
     - "8000"
     env_file: 
-      - path: ./vars.env
+      - path: ./vars.local.env
         required: true
     shm_size: 20gb
     deploy:
@@ -169,7 +169,7 @@ services:
       NIM_SERVED_MODEL_NAME: llama-3.1-nemoguard-8b-content-safety
       NIM_CUSTOM_MODEL_NAME: llama-3.1-nemoguard-8b-content-safety
     env_file: 
-      - path: ./vars.env
+      - path: ./vars.local.env
         required: true
     shm_size: 16gb
     deploy:
@@ -202,7 +202,7 @@ services:
       NIM_SERVED_MODEL_NAME: llama-3.1-nemoguard-8b-topic-control
       NIM_CUSTOM_MODEL_NAME: llama-3.1-nemoguard-8b-topic-control
     env_file: 
-      - path: ./vars.env
+      - path: ./vars.local.env
         required: true
     shm_size: 16gb
     deploy:

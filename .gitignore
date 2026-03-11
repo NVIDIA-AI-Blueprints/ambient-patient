@@ -1,4 +1,7 @@
 *.egg-info/
 *__pycache__/
 ace-controller-voice-interface/audio_dumps/
+ace-controller-voice-interface/configs/config_riva_runtime.yaml
 agent/app_output_files/
+ace-controller-voice-interface/ace_controller.local.env
+agent/vars.local.env
