@@ -88,7 +88,6 @@ services:
       - "7860:7860"
     volumes:
       - ./audio_dumps:/ace-controller/examples/healthcare_agent/audio_dumps
-      - ./configs:/ace-controller/examples/healthcare_agent/configs
     env_file:
       - path: ./ace_controller.local.env
         required: true

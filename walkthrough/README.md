@@ -2,6 +2,29 @@
 
 This README describes the current manual startup flow for the voice app.
 
+## 1. Create local .env files
+
+First, copy and rename the example environment variable files to create your local overrides.
+
+From the repo root, run:
+
+```bash
+# For the ACE Controller (voice UI frontend)
+cp ace-controller-voice-interface/ace_controller.env ace-controller-voice-interface/ace_controller.local.env
+
+# For the agent server
+cp agent/vars.local.env.example agent/vars.local.env
+```
+
+You now have two local files to customize:
+
+- `ace-controller-voice-interface/ace_controller.local.env`
+- `agent/vars.local.env`
+
+**Edit the values in these files to configure API keys and endpoints as needed for your environment.** Your local changes are ignored by git.
+  
+See the comments in those files for guidance on individual settings.
+
 ## 1. Update the Brev server IP
 
 When the Brev server IP changes, update it in these files.
