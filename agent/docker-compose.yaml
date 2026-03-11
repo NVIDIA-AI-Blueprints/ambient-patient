@@ -7,7 +7,7 @@ services:
       dockerfile: Dockerfile
     environment:
       - WATCHFILES_FORCE_POLLING=true
-    command: python3 chain_server/chain_server.py --assistant intake --port 8081
+    command: python3 chain_server/chain_server.py --assistant mmse --port 8081
     ports:
     - "8081:8081"
     expose:

@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: Apache-2.0
 
 from langgraph.graph.message import AnyMessage, add_messages
-from langchain.schema import HumanMessage, AIMessage
+from langchain.messages import HumanMessage, AIMessage
 from langchain_core.messages.tool import ToolMessage
 import re
 import logging

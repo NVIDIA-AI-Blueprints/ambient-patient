@@ -30,7 +30,7 @@ SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.dirname(SCRIPT_DIR))
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--assistant", choices=["full", "intake", "appointment", "medication"],
+parser.add_argument("--assistant", choices=["full", "intake", "appointment", "medication", "mmse"],
                     help = "Specify full for the full graph with main assistant routing to specialist assistants. "
                     "Specify intake for the patient intake assistant only. "
                     "Specify appointment for the appointemnt making assistant only."
@@ -68,6 +68,11 @@ def _load_assistant_graph():
         importlib.reload(graph_definitions.graph_medication_lookup_only)
         from graph_definitions.graph_medication_lookup_only import create_medication_lookup_graph
         return create_medication_lookup_graph()
+    elif args.assistant == "mmse":
+        import graph_definitions.graph_mmse_only
+        importlib.reload(graph_definitions.graph_mmse_only)
+        from graph_definitions.graph_mmse_only import create_mmse_graph
+        return create_mmse_graph()
     else:
         raise Exception("We must specify one of the three options for assistant: full, intake or appointment.")
 
