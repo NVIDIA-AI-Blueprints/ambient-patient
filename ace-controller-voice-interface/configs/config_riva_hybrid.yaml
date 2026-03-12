@@ -20,14 +20,14 @@ NvidiaRAGService:
 
 RivaASRService:
     # Self-hosted ASR on remote Brev instance
-    server: "{BREV_SERVER_IP}:50052" #needs to be adjusted every time ip changes
+    server: "160.211.45.27:50052" #needs to be adjusted every time ip changes
     language: "en-US"
     sample_rate: 16000
     model: "parakeet-1.1b-en-US-asr-streaming"
 
 RivaTTSService:
     # Public endpoint TTS fallback
-    server: "{BREV_SERVER_IP}:50051" #needs to be adjusted every time ip changes
+    server: "160.211.45.27:50051" #needs to be adjusted every time ip changes
     language: "en-US"
     voice_id: "Magpie-Multilingual.EN-US.Mia"
     model: "magpie_tts_ensemble-Magpie-Multilingual"

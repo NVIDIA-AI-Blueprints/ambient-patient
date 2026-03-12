@@ -1,48 +1,48 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-from dotenv import load_dotenv
+# stdlib
+import argparse
 import os
 import random
+import sys
 import threading
 from contextlib import nullcontext
-from urllib.parse import urlparse
-
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
-
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_core.runnables import Runnable, RunnableConfig
-
-from langgraph.graph import END, StateGraph, START
-from langgraph.graph.message import AnyMessage
-from langgraph.checkpoint.memory import MemorySaver
-
-import sys
+from pathlib import Path
 from typing import Annotated
 from typing_extensions import TypedDict
+from urllib.parse import urlparse
 
-
+# third-party
+from dotenv import load_dotenv
+from fastapi import FastAPI, HTTPException, Query
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.runnables import RunnableConfig
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
+from langfuse import Langfuse
+from langgraph.checkpoint.memory import MemorySaver
+from langgraph.graph import END, START, StateGraph
+from langgraph.graph.message import AnyMessage
 from nemoguardrails import RailsConfig
 from nemoguardrails.integrations.langchain.runnable_rails import RunnableRails
-
-
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.dirname(SCRIPT_DIR))
-from utils.logging import get_logging
-from graph_definitions.utils_graph import add_messages_with_reset
-from graph_definitions.mmse_construct.mmse_scoring_agent import MMSEScoringAgent, build_scoring_runnable
-from graph_definitions.mmse_construct.mmse_memory import MMSEMemoryManager
+import gradio as gr
+import uvicorn
 
 try:
     from langfuse.langchain import CallbackHandler as LangfuseCallbackHandler
 except ImportError:
     LangfuseCallbackHandler = None
 
-#################
-### variables ###
-#################
-save_graph_to_png = False
+# local
+SCRIPT_DIR = Path(__file__).parent
+sys.path.append(str(SCRIPT_DIR.parent))
+from utils.ui import launch_demo_ui
+from utils.logging import get_logging
+from graph_definitions.utils_graph import add_messages_with_reset
+from graph_definitions.mmse_scoring_agent import MMSEScoringAgent, build_scoring_runnable
+from graph_definitions.mmse_memory import MMSEMemoryManager
 
+save_graph_to_png = False
 env_var_file = "/env_vars/vars.env"
 
 
@@ -50,19 +50,23 @@ def load_env_variables():
     """Load environment variables from vars.env file and return configuration"""
     load_dotenv(env_var_file, override=True)
 
-    assert os.environ['NVIDIA_API_KEY'] is not None, "Make sure you have your NVIDIA_API_KEY exported as a environment variable!"
-    nvidia_api_key = os.getenv("NVIDIA_API_KEY", None)
+    nvidia_api_key = os.getenv("NVIDIA_API_KEY")
+    assert nvidia_api_key, "NVIDIA_API_KEY environment variable is not set."
 
-    assert os.environ['AGENT_LLM_MODEL'] is not None, "Make sure you have your AGENT_LLM_MODEL exported as a environment variable!"
-    llm_model = os.getenv("AGENT_LLM_MODEL", None)
+    llm_model = os.getenv("AGENT_LLM_MODEL")
+    assert llm_model, "AGENT_LLM_MODEL environment variable is not set."
 
-    assert os.environ['AGENT_LLM_BASE_URL'] is not None, "Make sure you have your AGENT_LLM_BASE_URL exported as a environment variable!"
-    base_url = os.getenv("AGENT_LLM_BASE_URL", None)
+    base_url = os.getenv("AGENT_LLM_BASE_URL")
+    assert base_url, "AGENT_LLM_BASE_URL environment variable is not set."
 
-    nemo_guardrails_config_path = os.getenv("NEMO_GUARDRAILS_CONFIG_PATH", None)
-    langfuse_public_key = os.getenv("LANGFUSE_PUBLIC_KEY", None)
-    langfuse_secret_key = os.getenv("LANGFUSE_SECRET_KEY", None)
-    langfuse_base_url = os.getenv("LANGFUSE_BASE_URL", None)
+    # MEMORY_LLM_MODEL controls the LLM used for Neo4j entity extraction.
+    # Defaults to AGENT_LLM_MODEL so a single variable covers the simple case.
+    memory_llm_model = os.getenv("MEMORY_LLM_MODEL") or llm_model
+
+    nemo_guardrails_config_path = os.getenv("NEMO_GUARDRAILS_CONFIG_PATH")
+    langfuse_public_key = os.getenv("LANGFUSE_PUBLIC_KEY")
+    langfuse_secret_key = os.getenv("LANGFUSE_SECRET_KEY")
+    langfuse_base_url = os.getenv("LANGFUSE_BASE_URL")
     langfuse_prompt_label = os.getenv("LANGFUSE_PROMPT_LABEL", "production")
     langfuse_scoring_prompt_name = os.getenv("LANGFUSE_SCORING_PROMPT_NAME", "mmse-agent-scoring")
     langfuse_scoring_prompt_label = os.getenv("LANGFUSE_SCORING_PROMPT_LABEL", langfuse_prompt_label)
@@ -85,10 +89,10 @@ def load_env_variables():
         'langfuse_scoring_prompt_name': langfuse_scoring_prompt_name,
         'langfuse_scoring_prompt_label': langfuse_scoring_prompt_label,
         'langfuse_trace_enabled': langfuse_trace_enabled,
-        # Neo4j agentic memory
         'neo4j_uri': neo4j_uri,
         'neo4j_username': neo4j_username,
         'neo4j_password': neo4j_password,
+        'memory_llm_model': memory_llm_model,
     }
 
 
@@ -148,7 +152,8 @@ RECALL_WORD_POOL: list[list[str]] = [
     ["FLOWER", "DOCTOR",  "SUNSET"],
     ["MIRROR", "GARDEN",  "BRIDGE"],
 ]
-# ─────────────────────────────────────────────────────────────────────────────
+# Sections where entity extraction is useful (rich PII / orientation data)
+_ENTITY_SECTIONS = {"orientation_place", "orientation_time", "intake"}
 
 
 class State(TypedDict):
@@ -181,8 +186,12 @@ class SectionAssistant:
     # ── helpers ────────────────────────────────────────────────────────────
 
     def _build_runnable(self, resolved_prompt: str):
+        # Escape literal { } so ChatPromptTemplate doesn't mistake JSON
+        # examples in the Langfuse prompt for template variables.
+        # By this point all {word_N} substitutions have already been done.
+        safe_prompt = resolved_prompt.replace("{", "{{").replace("}", "}}")
         template = ChatPromptTemplate.from_messages([
-            ("system", resolved_prompt),
+            ("system", safe_prompt),
             ("placeholder", "{messages}"),
         ])
         llm_chain = (self.guardrails | self.llm) if self.guardrails else self.llm
@@ -222,12 +231,43 @@ class SectionAssistant:
             return "\n".join(chunks)
         return str(content)
 
+    # ── reasoning-JSON splitter ───────────────────────────────────────────
+
+    _REASONING_MARKER = "<<<REASONING>>>"
+
+    def _split_reasoning(self, raw_text: str) -> tuple[str, dict | None]:
+        """Split LLM output into (spoken_text, reasoning_dict).
+
+        Prompts that embed a <<<REASONING>>> marker produce two parts:
+          PART 1 — the text spoken aloud to the patient
+          PART 2 — a private JSON object for the graph memory system
+
+        Returns (spoken_text, reasoning_dict).  reasoning_dict is None when
+        the marker is absent (e.g. sections that do not use the new format).
+        """
+        import json as _json
+        if self._REASONING_MARKER not in raw_text:
+            return raw_text, None
+        parts = raw_text.split(self._REASONING_MARKER, 1)
+        spoken = parts[0].strip()
+        json_part = parts[1].strip() if len(parts) > 1 else ""
+        reasoning_dict = None
+        if json_part:
+            # The model sometimes wraps JSON in a markdown code block — strip it.
+            json_clean = json_part.strip().lstrip("```json").lstrip("```").rstrip("```").strip()
+            try:
+                reasoning_dict = _json.loads(json_clean)
+            except Exception as ex:
+                logger.warning(f"[reasoning] JSON parse failed for section '{self.section_name}': {ex} — raw: {json_clean[:300]}")
+        return spoken, reasoning_dict
+
     def _is_section_complete(self, text: str) -> bool:
         # The completion signal must be at the END of the response, not just
         # anywhere in it. This prevents false positives from opening phrases
         # like "...just do your best. Let's begin. To start, what is today's date?"
         # where "let's begin" is a mid-sentence opener, not a section-end marker.
         # Strategy: strip trailing punctuation/whitespace, then check endswith.
+        # NOTE: always check against the SPOKEN part (before <<<REASONING>>>).
         normalised = text.strip().rstrip(".!?\"'").strip().lower()
         return any(normalised.endswith(sig) for sig in SECTION_COMPLETE_SIGNALS)
 
@@ -245,11 +285,23 @@ class SectionAssistant:
 
         # Reset section tracking when returning to intake (e.g. after "start over")
         if self.section_name == "intake":
-            if state.get("current_section") not in (None, "", "intake"):
+            thread_id_early = config.get("configurable", {}).get("thread_id", "unknown") if isinstance(config, dict) else "unknown"
+            current_sec = state.get("current_section")
+            if current_sec not in (None, "", "intake"):
+                # Explicit mid-session restart → reset state and wipe graph
                 state_updates["current_section"] = "intake"
                 state_updates["recall_words"] = []
                 state = {**state, "current_section": "intake", "recall_words": []}
                 logger.info("Session reset detected — clearing current_section and recall_words")
+                if self.memory_manager is not None:
+                    self.memory_manager.clear_session(thread_id_early)
+                    logger.info(f"[memory] Graph cleared on restart for session={thread_id_early}")
+            elif current_sec in (None, ""):
+                # First message of a brand-new session → wipe any leftover graph data
+                if self.memory_manager is not None:
+                    self.memory_manager.clear_session(thread_id_early)
+                    logger.info(f"[memory] Graph cleared for new session={thread_id_early}")
+
 
         # Generate recall words at the start of the immediate_recall section
         if self.section_name == "immediate_recall" and not state.get("recall_words"):
@@ -259,9 +311,32 @@ class SectionAssistant:
             logger.info(f"Generated recall words for session: {words}")
 
         resolved_prompt = self._resolve_prompt(state)
-        runnable = self._build_runnable(resolved_prompt)
         input_message = self._extract_last_user_message(state)
         thread_id = config.get("configurable", {}).get("thread_id", "unknown") if isinstance(config, dict) else "unknown"
+
+        # ── Inject memory context so the agent doesn't repeat questions ───────
+        if self.memory_manager is not None and self.memory_manager.is_connected:
+            mem_query = f"MMSE {self.section_name}: what questions were already asked and answered?"
+            mem_context = self.memory_manager.get_session_context(thread_id, query=mem_query)
+            if mem_context:
+                separator = "─" * 45
+                resolved_prompt = (
+                    f"{resolved_prompt}\n\n─── PREVIOUS SESSION MEMORY {separator}\n"
+                    f"{mem_context}\n"
+                    f"─── END MEMORY {separator}\n"
+                    "IMPORTANT: Do NOT ask again about anything already answered above. "
+                    "Reference prior answers naturally if relevant."
+                )
+                logger.info(
+                    f"[memory] Context injected: section={self.section_name} "
+                    f"session={thread_id} length={len(mem_context)} chars"
+                )
+            else:
+                logger.info(
+                    f"[memory] No prior context: section={self.section_name} session={thread_id}"
+                )
+
+        runnable = self._build_runnable(resolved_prompt)
 
         # Build invoke config with Langfuse CallbackHandler + metadata for this section
         invoke_config = dict(config) if isinstance(config, dict) else {}
@@ -321,6 +396,22 @@ class SectionAssistant:
                 if root_observation is not None:
                     root_observation.update(output={"response_preview": output_text[:500]})
 
+        # ── Split spoken text from embedded reasoning JSON ─────────────────────
+        spoken_text, reasoning_dict = self._split_reasoning(output_text)
+        logger.debug(
+            f"[reasoning] section={self.section_name} has_json={reasoning_dict is not None} "
+            f"spoken_len={len(spoken_text)}"
+        )
+        # Overwrite output_text (and the result message content) with the spoken
+        # part only — so TTS, section-complete detection, and LangGraph history
+        # all see clean patient-facing text, never the raw JSON block.
+        if reasoning_dict is not None:
+            output_text = spoken_text
+            try:
+                result.content = spoken_text
+            except AttributeError:
+                pass  # immutable — output_text is already correct
+
         if self.langfuse_client is not None:
             # Flush in a background thread — do NOT block the graph turn on network I/O
             # to the Langfuse server (SSH-tunnelled, can add seconds of latency).
@@ -338,7 +429,7 @@ class SectionAssistant:
             next_sec = self._next_section()
             state_updates["current_section"] = next_sec
             logger.info(f"Section '{self.section_name}' complete → advancing to '{next_sec}'")
-        # ── Persist to agentic memory (true fire-and-forget background thread) ─
+        # Persist to agentic memory (fire-and-forget background thread).
         # store_message_pair(extract_entities=True) handles entity extraction in
         # a single add_message call.  Never call extract_and_store_entities
         # separately — that inserts the same user message twice and triggers a
@@ -349,10 +440,9 @@ class SectionAssistant:
             _utext = input_message
             _atext = output_text
             _sec = self.section_name
-            _lf = self.langfuse_client  # may be None
-            # Entity extraction is only useful for sections with rich PII content.
-            _ENTITY_SECTIONS = {"orientation_place", "orientation_time", "intake"}
+            _lf = self.langfuse_client
             _extract = _sec in _ENTITY_SECTIONS
+            _reasoning_dict = reasoning_dict  # None for sections without embedded JSON
             def _write_memory():
                 # Create a Langfuse span for this memory write so it shows in the UI.
                 # start_as_current_observation can be called from any thread; it will
@@ -381,7 +471,8 @@ class SectionAssistant:
                             ai_text=_atext,
                             section=_sec,
                             extract_entities=_extract,
-                        )
+                            reasoning_dict=_reasoning_dict,
+                        )  # reasoning_dict is None for sections without embedded JSON
                         if obs is not None:
                             try:
                                 obs.update(output={"status": "ok", "extract_entities": _extract})
@@ -404,10 +495,6 @@ class SectionAssistant:
                         pass
             threading.Thread(target=_write_memory, daemon=True).start()
         return {"messages": result, **state_updates}
-
-
-# MMSEScoringAgent is now in graph_definitions/mmse_scoring_agent.py
-# Imported above via: from graph_definitions.mmse_scoring_agent import MMSEScoringAgent, build_scoring_runnable
 
 
 def get_langfuse_tracing_client(env_config: dict):
@@ -535,7 +622,7 @@ def _prompt_label_candidates(prompt_label: str | None) -> list[str | None]:
 
 
 def _load_local_mmse_chat_prompt() -> str:
-    local_prompt_path = os.path.join(SCRIPT_DIR, "system_prompts", "mmse_system_prompt.txt")
+    local_prompt_path = SCRIPT_DIR / "system_prompts" / "mmse_system_prompt.txt"
     try:
         with open(local_prompt_path, "r") as f:
             prompt = f.read().strip()
@@ -578,8 +665,6 @@ def _load_prompt_from_langfuse(env_config: dict, prompt_name: str, prompt_label:
             f"Langfuse config incomplete for {prompt_purpose}. "
             "Set LANGFUSE_PUBLIC_KEY, LANGFUSE_SECRET_KEY, LANGFUSE_BASE_URL and the prompt name env var."
         )
-
-    from langfuse import Langfuse
 
     langfuse_client = Langfuse(
         public_key=env_config['langfuse_public_key'],
@@ -716,7 +801,26 @@ _SECTION_FALLBACK_PROMPTS: dict[str, str] = {
 
 
 def load_section_prompt(env_config: dict, section_name: str) -> str:
-    """Load a per-section MMSE prompt from Langfuse, falling back to a local default."""
+    """Load a per-section MMSE prompt.
+
+    Priority order:
+      1. Local file at system_prompts/mmse_<section_name>_prompt.txt
+         (allows rapid iteration without touching Langfuse)
+      2. Langfuse (keyed by SECTION_PROMPT_MAP)
+      3. Built-in fallback string from _SECTION_FALLBACK_PROMPTS
+    """
+    # ── 1. Try local file first ────────────────────────────────────────────
+    local_path = SCRIPT_DIR / "system_prompts" / f"mmse_{section_name}_prompt.txt"
+    if local_path.exists():
+        try:
+            prompt = local_path.read_text(encoding="utf-8").strip()
+            if prompt:
+                logger.info(f"Loaded MMSE {section_name} prompt from local file {local_path}")
+                return prompt
+        except Exception as ex:
+            logger.warning(f"Failed to read local prompt {local_path}: {ex}")
+
+    # ── 2. Try Langfuse ────────────────────────────────────────────────────
     langfuse_name = SECTION_PROMPT_MAP.get(section_name, "")
     prompt_label = env_config.get('langfuse_prompt_label', 'production')
     try:
@@ -727,6 +831,7 @@ def load_section_prompt(env_config: dict, section_name: str) -> str:
             prompt_purpose=f"MMSE {section_name} prompt",
         )
     except Exception as ex:
+        # ── 3. Built-in fallback ───────────────────────────────────────────
         fallback = _SECTION_FALLBACK_PROMPTS.get(section_name, "You are an MMSE clinical assistant.")
         logger.warning(
             f"Falling back to built-in prompt for section '{section_name}' "
@@ -825,9 +930,13 @@ def create_mmse_graph():
                 neo4j_password=env_config['neo4j_password'],
                 neo4j_username=env_config.get('neo4j_username', 'neo4j'),
                 nvidia_api_key=env_config.get('nvidia_api_key'),
-                llm_model=env_config.get('llm_model', 'meta/llama-3.3-70b-instruct'),
+                llm_model=env_config.get('memory_llm_model', 'meta/llama-3.3-70b-instruct'),
                 llm_base_url=env_config.get('base_url', 'https://integrate.api.nvidia.com/v1'),
                 langfuse_client=langfuse_client,
+            )
+            logger.info(
+                f"Agentic memory: entity extraction LLM = {env_config.get('memory_llm_model')}, "
+                f"conversation LLM = {env_config.get('llm_model')}"
             )
             logger.info("Agentic memory enabled (Neo4j + NV-EmbedCode-7B-v1).")
         except Exception as exc:
@@ -883,3 +992,94 @@ def create_mmse_graph():
     graph = builder.compile(checkpointer=memory)
     logger.info("MMSE graph built successfully with per-section nodes: %s", section_node_names)
     return graph
+
+
+mmse_graph = create_mmse_graph()
+
+if save_graph_to_png:
+    try:
+        save_image_path = "/graph_images/appgraph_mmse_agent.png"
+        with open(save_image_path, "wb") as png:
+            png.write(mmse_graph.get_graph(xray=True).draw_mermaid_png())
+        logger.info(f"Graph PNG saved to {save_image_path}")
+    except Exception as ex:
+        logger.error(f"Error saving graph to PNG: {ex}")
+
+demo = launch_demo_ui(mmse_graph)
+
+app = FastAPI()
+
+
+@app.get("/")
+def app_main():
+    return {"message": "This is your main app"}
+
+
+@app.get("/mmse-score")
+def get_mmse_score(thread_id: str = Query(..., description="LangGraph thread_id used for the MMSE chat session.")):
+    thread_config = {
+        "configurable": {
+            "thread_id": thread_id,
+            "recursion_limit": 10,
+        }
+    }
+
+    try:
+        graph_state_snapshot = mmse_graph.get_state(thread_config)
+        values = getattr(graph_state_snapshot, "values", None)
+        if not isinstance(values, dict):
+            raise HTTPException(status_code=404, detail="No MMSE score found for this thread_id.")
+
+        latest_score = values.get("mmse_score")
+        score_history = values.get("mmse_scoring_history", [])
+
+        if latest_score is None:
+            raise HTTPException(status_code=404, detail="No MMSE score found for this thread_id.")
+
+        return {
+            "thread_id": thread_id,
+            "mmse_score": latest_score,
+            "mmse_scoring_history": score_history,
+        }
+    except HTTPException:
+        raise
+    except Exception as ex:
+        logger.error(f"Failed to retrieve MMSE score for thread_id={thread_id}: {ex}")
+        raise HTTPException(status_code=500, detail="Unable to retrieve MMSE score.")
+
+
+app = gr.mount_gradio_app(app, demo, path="/mmse-agent")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--port", type=int, default=7861,
+                        help="Port for the Gradio UI / FastAPI server.")
+    parser.add_argument("--debug", action="store_true",
+                        help="Start debugpy and wait for a VS Code remote-attach on --debug-port.")
+    parser.add_argument("--debug-port", type=int, default=5678,
+                        help="Port debugpy listens on (default: 5678).")
+
+    args = parser.parse_args()
+
+    if args.debug:
+        import debugpy
+        debugpy.listen(("0.0.0.0", args.debug_port))
+        logger.info(f"debugpy listening on 0.0.0.0:{args.debug_port} — attach from VS Code now …")
+        debugpy.wait_for_client()
+        logger.info("VS Code debugger attached.")
+
+    uvicorn.run(
+        "graph_mmse_agent:app",
+        host="0.0.0.0",
+        port=args.port,
+        # reload forks a child process which breaks debugpy; disable when debugging
+        reload=not args.debug,
+        reload_includes=["*.env", "*.txt", "*.co", "*.yml", "*.py"],
+        reload_excludes=["**/__pycache__/**", "**/graph_images/**", "**/*.png"],
+        reload_dirs=[
+            "/app/graph_definitions",
+            "/app/nmgr-config-store",
+            "/app/utils",
+            "/env_vars",
+        ],
+    )
