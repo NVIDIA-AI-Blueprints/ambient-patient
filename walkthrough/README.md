@@ -33,8 +33,8 @@ When the Brev server IP changes, update it in these files.
 
 Set the remote Riva endpoints:
 
-- `RivaASRService.server` -> `<BREV_SERVER_IP>:50052`
-- `RivaTTSService.server` -> `<BREV_SERVER_IP>:50051`
+- `RivaASRService.server` -> `<BREV_BREV_SERVER_IP>:50052`
+- `RivaTTSService.server` -> `<BREV_BREV_SERVER_IP>:50051`
 
 Example:
 
@@ -52,7 +52,7 @@ Make sure these values are set:
 
 ```env
 CONFIG_PATH=./configs/config_riva_hybrid.yaml
-TURN_SERVER_URL=turn:<BREV_SERVER_IP>:3478
+TURN_SERVER_URL=turn:<BREV_BREV_SERVER_IP>:3478
 ```
 
 ## 3. Create Tunnel for neo4j
@@ -113,4 +113,4 @@ docker rm -f turn-server 2>/dev/null || true
 
 ## 7. Langfuse
 
-You can access langfuse at <BREV_SERVER_IP>:3000
+You can access langfuse at <BREV_BREV_SERVER_IP>:3000

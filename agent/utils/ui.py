@@ -56,7 +56,7 @@ def launch_demo_ui(assistant_graph):
         
 
         with gr.Row(equal_height=True):
-            chatbot = gr.Chatbot(label="Healthcare Contact Center Agent", elem_id="chatbot", show_copy_button=True)
+            chatbot = gr.Chatbot(label="Healthcare Contact Center Agent", elem_id="chatbot")
             latest_response = gr.Textbox(label = "Latest Response", visible=False)
             full_response = gr.Textbox(label = "Full Response Log", visible=False, elem_id="fullresponsebox", lines=25)
     

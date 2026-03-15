@@ -5,13 +5,18 @@ services:
     build:
       context: ./
       dockerfile: Dockerfile
+    env_file:
+      - path: ./vars.local.env
+        required: false   # safe if running docker compose directly before start script creates it
     environment:
       - WATCHFILES_FORCE_POLLING=true
-    command: python3 chain_server/chain_server.py --assistant mmse --port 8081
+    command: python3 chain_server/chain_server.py --assistant mmse --port ${APP_SERVER_PORT:-8082}
     ports:
-    - "8081:8081"
+    - "${APP_SERVER_PORT:-8082}:${APP_SERVER_PORT:-8082}"
+    - "5678:5678"
     expose:
-    - "8081"
+    - "${APP_SERVER_PORT:-8082}"
+    - "5678"
     volumes:
       - ./graph_definitions/graph_images:/graph_images
       - ./app_output_files:/app/app_output_files
@@ -21,6 +26,8 @@ services:
       - ./vars.local.env:/env_vars/vars.env
       - ./sample_db:/app/sample_db
     shm_size: 5gb
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - healthcare-agent-network
     

@@ -15,19 +15,19 @@ OpenAILLMContext:
 # This configuration is only used when llm_processor is set to "NvidiaRAGService"
 NvidiaRAGService:
     max_tokens: 1024
-    rag_server_url: "http://app-server-healthcare-assistant:8081"
+    rag_server_url: "${RAG_SERVER_URL}"  # set in ace_controller.local.env
 
 
 RivaASRService:
     # Self-hosted ASR on remote Brev instance
-    server: "160.211.45.27:50052" #needs to be adjusted every time ip changes
+    server: "160.211.45.176:50052"
     language: "en-US"
     sample_rate: 16000
     model: "parakeet-1.1b-en-US-asr-streaming"
 
 RivaTTSService:
     # Public endpoint TTS fallback
-    server: "160.211.45.27:50051" #needs to be adjusted every time ip changes
+    server: "160.211.45.176:50051"
     language: "en-US"
     voice_id: "Magpie-Multilingual.EN-US.Mia"
     model: "magpie_tts_ensemble-Magpie-Multilingual"

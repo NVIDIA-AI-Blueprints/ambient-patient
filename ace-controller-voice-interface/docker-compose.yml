@@ -103,6 +103,8 @@ services:
       options:
         max-size: "50m"
         max-file: "5"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     profiles:
       - ace-controller
     networks:

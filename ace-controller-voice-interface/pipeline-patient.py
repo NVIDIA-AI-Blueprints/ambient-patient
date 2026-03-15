@@ -11,7 +11,7 @@ import argparse
 import asyncio
 import json
 import os
-
+import re
 import sys
 import uuid
 from pathlib import Path
@@ -55,7 +55,13 @@ config_path = os.getenv("CONFIG_PATH")
 if not config_path:
     raise ValueError("CONFIG_PATH environment variable is not set")
 try:
-    config = Config(**yaml.safe_load(Path(config_path).read_text()))
+    raw_yaml = os.path.expandvars(Path(config_path).read_text())
+    unresolved = re.findall(r'\$\{[^}]+\}', raw_yaml)
+    if unresolved:
+        raise ValueError(
+            f"Unresolved environment variables in config file {config_path}: {unresolved}"
+        )
+    config = Config(**yaml.safe_load(raw_yaml))
 except FileNotFoundError as e:
     raise FileNotFoundError(f"Config file not found at: {config_path}") from e
 except yaml.YAMLError as e:
