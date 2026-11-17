@@ -23,6 +23,7 @@ from zoneinfo import ZoneInfo
 from enum import Enum
 
 import shutil
+import threading
 
 from langchain_community.tools.tavily_search import TavilySearchResults
 
@@ -71,6 +72,16 @@ env_var_file = "/env_vars/vars.env"
 
 local_file_constant = "sample_db/test_db.sqlite"
 local_file_current = "sample_db/test_db_tmp_copy.sqlite"
+appointment_db_ready = False
+appointment_db_lock = threading.Lock()
+
+def prepare_appointment_db():
+    """Copy the sample schedule to the working copy once per process, so bookings are kept between searches."""
+    global appointment_db_ready
+    with appointment_db_lock:
+        if not appointment_db_ready:
+            shutil.copyfile(local_file_constant, local_file_current)
+            appointment_db_ready = True
 
 def load_env_variables():
     """Load environment variables from vars.env file and return configuration"""
@@ -210,22 +221,25 @@ def find_available_appointments(
 ) -> list:
     """Look for available new appointments."""
     
-    shutil.copyfile(local_file_constant, local_file_current)
+    prepare_appointment_db()
 
     conn = sqlite3.connect(local_file_current)
     
-    query_datetime = "SELECT * from appointment_schedule WHERE appointment_type = \"{}\" AND patient IS NULL ".format(appointment_type.value)
+    query_datetime = "SELECT * from appointment_schedule WHERE appointment_type = ? AND patient IS NULL "
+    query_params = [appointment_type.value]
 
     #start_date, end_date = datetime.date.fromisoformat(start_date), datetime.date.fromisoformat(end_date)
     if start_date:
-        query_datetime += " AND datetime >= \"{}\"".format(start_date)
+        query_datetime += " AND datetime >= ?"
+        query_params.append(str(start_date))
 
     if end_date:
-        query_datetime += " AND datetime <= \"{}\"".format(end_date + datetime.timedelta(hours=24) )
-    print(query_datetime)
+        query_datetime += " AND datetime <= ?"
+        query_params.append(str(end_date + datetime.timedelta(hours=24)))
+    print(query_datetime, query_params)
     
     available_appts = pd.read_sql(
-        query_datetime, conn
+        query_datetime, conn, params=query_params
     )
 
     print(available_appts)
@@ -239,16 +253,24 @@ def book_appointment(
 )-> pd.DataFrame:
     """Book new appointments."""
     
+    prepare_appointment_db()
     conn = sqlite3.connect(local_file_current)
 
-    booking_query = "UPDATE appointment_schedule SET patient = \"current_patient\" WHERE datetime = \"{}\" AND appointment_type = \"{}\"".format(appointment_datetime, appointment_type.value)
+    slot = (str(appointment_datetime), appointment_type.value)
+    booking_query = "UPDATE appointment_schedule SET patient = \"current_patient\" WHERE datetime = ? AND appointment_type = ? AND patient IS NULL"
     
     cur = conn.cursor()    
-    cur.execute(booking_query)
+    cur.execute(booking_query, slot)
+    conn.commit()
 
-    find_patient_appt_query = "SELECT * from appointment_schedule where patient = \"current_patient\""
+    # Only return the slot booked by this call. Bookings from earlier conversations
+    # use the same patient marker, so they must not be shown as this patient's.
+    find_patient_appt_query = "SELECT * from appointment_schedule where patient = \"current_patient\" AND datetime = ? AND appointment_type = ?"
 
-    current_patient_entries = pd.read_sql(find_patient_appt_query, conn, index_col="index")
+    current_patient_entries = pd.read_sql(find_patient_appt_query, conn, index_col="index", params=slot)
+    if cur.rowcount == 0:
+        # the slot does not exist or is already taken: nothing was booked
+        current_patient_entries = current_patient_entries.iloc[0:0]
 
     cur.close()
     conn.close()
